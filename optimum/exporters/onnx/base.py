@@ -87,7 +87,6 @@ class ModelPatcher:
 
         self.orig_forward_name = "forward" if hasattr(self._model, "forward") else "call"
         self.orig_forward = getattr(self._model, self.orig_forward_name)
-        onnx_to_torch = {v: k for k, v in config.torch_to_onnx_input_map.items()}
 
         # TODO: remove that once we got rid of OnnxConfigWithLoss or we implemented it better.
         if isinstance(config, OnnxConfigWithLoss):
@@ -102,7 +101,7 @@ class ModelPatcher:
             return {
                 k: v
                 for k, v in outputs.items()
-                if onnx_to_torch.get(k, k) in config.outputs
+                if config.torch_to_onnx_output_map.get(k, k) in config.outputs
                 or (allow_past_in_outputs and k.startswith("past_key_values"))
             }
 
@@ -383,6 +382,17 @@ class OnnxConfig(ExportConfig, ABC):
         """
         return {}
 
+    @property
+    def torch_to_onnx_output_map(self) -> Mapping[str, str]:
+        """
+        Dictionary of keys to update the ONNX output name for export. Override the function when
+        the output names and the exported ONNX output names need are different.
+
+        Returns:
+            `Mapping[str, str]`: A dictionary specifying the output name to exported ONNX output name map.
+        """
+        return {}
+
     def ordered_inputs(self, model: Union["PreTrainedModel", "TFPreTrainedModel"]) -> Mapping[str, Mapping[int, str]]:
         """
         Re-orders the inputs using the model forward pass signature.
@@ -474,7 +484,8 @@ class OnnxConfig(ExportConfig, ABC):
         Returns:
             `List[str]`: The corresponding reference model output names.
         """
-        return reference_output_names
+        onnx_to_torch = {v: k for k, v in self.torch_to_onnx_output_map.items()}
+        return [onnx_to_torch.get(k, k) for k in reference_output_names]
 
 
 class OnnxConfigWithPast(OnnxConfig, ABC):
@@ -836,6 +847,10 @@ class OnnxConfigWithLoss(OnnxConfig, ABC):
     @property
     def torch_to_onnx_input_map(self) -> Mapping[str, str]:
         return self._onnx_config.torch_to_onnx_input_map
+
+    @property
+    def torch_to_onnx_output_map(self) -> Mapping[str, str]:
+        return self._onnx_config.torch_to_onnx_output_map
 
     @property
     def values_override(self) -> Optional[Mapping[str, Any]]:
